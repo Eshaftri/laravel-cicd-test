@@ -2,9 +2,9 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 
 class Book extends Model
@@ -18,20 +18,20 @@ class Book extends Model
 
     public function scopeTitle(Builder $query, string $title): Builder
     {
-        return $query->where('title', 'LIKE', '%' . $title . '%');
+        return $query->where('title', 'LIKE', '%'.$title.'%');
     }
 
     public function scopeWithReviewsCount(Builder $query, $from = null, $to = null): Builder|QueryBuilder
     {
         return $query->withCount([
-            'reviews' => fn(Builder $q) => $this->dateRangeFilter($q, $from, $to)
+            'reviews' => fn (Builder $q) => $this->dateRangeFilter($q, $from, $to),
         ]);
     }
 
     public function scopeWithAvgRating(Builder $query, $from = null, $to = null): Builder|QueryBuilder
     {
         return $query->withAvg([
-            'reviews' => fn(Builder $q) => $this->dateRangeFilter($q, $from, $to)
+            'reviews' => fn (Builder $q) => $this->dateRangeFilter($q, $from, $to),
         ], 'rating');
     }
 
@@ -54,9 +54,9 @@ class Book extends Model
 
     private function dateRangeFilter(Builder $query, $from = null, $to = null)
     {
-        if ($from && !$to) {
+        if ($from && ! $to) {
             $query->where('created_at', '>=', $from);
-        } elseif (!$from && $to) {
+        } elseif (! $from && $to) {
             $query->where('created_at', '<=', $to);
         } elseif ($from && $to) {
             $query->whereBetween('created_at', [$from, $to]);
@@ -94,10 +94,10 @@ class Book extends Model
     protected static function booted()
     {
         static::updated(
-            fn(Book $book) => cache()->forget('book:' . $book->id)
+            fn (Book $book) => cache()->forget('book:'.$book->id)
         );
         static::deleted(
-            fn(Book $book) => cache()->forget('book:' . $book->id)
+            fn (Book $book) => cache()->forget('book:'.$book->id)
         );
     }
 }
