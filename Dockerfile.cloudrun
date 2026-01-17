@@ -1,0 +1,86 @@
+# Multi-stage build for Google Cloud Run
+FROM php:8.2-fpm AS base
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    zip \
+    unzip \
+    nginx \
+    supervisor \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PHP extensions
+RUN docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd
+
+# Install Redis extension for caching
+RUN pecl install redis && docker-php-ext-enable redis
+
+# Get Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Install Node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /var/www/html
+
+# Production build stage
+FROM base AS production
+
+# Copy application files
+COPY --chown=www-data:www-data . /var/www/html
+
+# Install PHP dependencies (production only)
+RUN composer install \
+    --no-dev \
+    --no-interaction \
+    --prefer-dist \
+    --optimize-autoloader \
+    --no-scripts
+
+# Install Node dependencies and build assets
+RUN npm ci --only=production \
+    && npm run build \
+    && rm -rf node_modules
+
+# Create necessary directories with proper permissions
+RUN mkdir -p \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/framework/cache \
+    storage/logs \
+    bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
+
+# Configure Nginx for Cloud Run
+COPY docker/cloudrun/nginx.conf /etc/nginx/sites-available/default
+
+# Configure Supervisor
+COPY docker/cloudrun/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Optimize Laravel
+RUN php artisan config:cache \
+    && php artisan route:cache \
+    && php artisan view:cache || true
+
+# Cloud Run expects the app to listen on $PORT
+ENV PORT=8080
+EXPOSE 8080
+
+# Create startup script
+RUN echo '#!/bin/bash\n\
+sed -i "s/listen 80/listen $PORT/g" /etc/nginx/sites-available/default\n\
+/usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf\n\
+' > /start.sh && chmod +x /start.sh
+
+CMD ["/start.sh"]
