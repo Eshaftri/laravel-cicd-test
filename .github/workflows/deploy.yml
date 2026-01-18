@@ -12,8 +12,8 @@ on:
 
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  REGION: us-central1
-  GAR_LOCATION: us-central1
+  REGION: europe-west1
+  GAR_LOCATION: europe-west1
 
 jobs:
   setup:
@@ -21,6 +21,7 @@ jobs:
     outputs:
       environment: ${{ steps.set-env.outputs.environment }}
       service-name: ${{ steps.set-env.outputs.service-name }}
+
     steps:
       - name: Determine environment
         id: set-env
@@ -74,11 +75,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ✅ FIXED VALIDATION (NO more "too many arguments")
       - name: Validate required config
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          CLOUDSQL_CONNECTION_NAME: ${{ secrets.CLOUDSQL_CONNECTION_NAME }}
         run: |
           if [[ -z "$GCP_SA_KEY" ]]; then
             echo "::error::GCP_SA_KEY secret is not set. Please configure it in GitHub repository settings."
@@ -87,6 +88,11 @@ jobs:
 
           if [[ -z "$PROJECT_ID" ]]; then
             echo "::error::GCP_PROJECT_ID variable is not set. Please configure it in GitHub repository settings."
+            exit 1
+          fi
+
+          if [[ -z "$CLOUDSQL_CONNECTION_NAME" ]]; then
+            echo "::error::CLOUDSQL_CONNECTION_NAME secret is not set. Add it like: project:region:instance"
             exit 1
           fi
 
@@ -121,22 +127,54 @@ jobs:
             --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/book-review/${{ needs.setup.outputs.service-name }}:${{ github.sha }} \
             --platform managed \
             --region ${{ env.REGION }} \
+            --add-cloudsql-instances ${{ secrets.CLOUDSQL_CONNECTION_NAME }} \
             --allow-unauthenticated \
             --set-env-vars "APP_ENV=${{ needs.setup.outputs.environment }}" \
             --set-env-vars "APP_DEBUG=${{ vars.APP_DEBUG }}" \
             --set-env-vars "APP_KEY=${{ secrets.APP_KEY }}" \
             --set-env-vars "DB_CONNECTION=mysql" \
-            --set-env-vars "DB_HOST=${{ secrets.DB_HOST }}" \
-            --set-env-vars "DB_PORT=${{ secrets.DB_PORT }}" \
+            --set-env-vars "DB_HOST=/cloudsql/${{ secrets.CLOUDSQL_CONNECTION_NAME }}" \
+            --set-env-vars "DB_PORT=3306" \
             --set-env-vars "DB_DATABASE=${{ secrets.DB_DATABASE }}" \
             --set-env-vars "DB_USERNAME=${{ secrets.DB_USERNAME }}" \
             --set-env-vars "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" \
-            --set-env-vars "CACHE_DRIVER=redis" \
-            --set-env-vars "SESSION_DRIVER=redis" \
-            --set-env-vars "REDIS_HOST=${{ secrets.REDIS_HOST }}" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
             --timeout 300 \
-            --co
+            --concurrency 80
+
+      - name: Run database migrations (Cloud Run Job)
+        run: |
+          gcloud run jobs create ${{ needs.setup.outputs.service-name }}-migrate-${{ github.sha }} \
+            --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/book-review/${{ needs.setup.outputs.service-name }}:${{ github.sha }} \
+            --region ${{ env.REGION }} \
+            --set-env-vars "APP_ENV=${{ needs.setup.outputs.environment }}" \
+            --set-env-vars "APP_KEY=${{ secrets.APP_KEY }}" \
+            --set-env-vars "DB_CONNECTION=mysql" \
+            --set-env-vars "DB_HOST=/cloudsql/${{ secrets.CLOUDSQL_CONNECTION_NAME }}" \
+            --set-env-vars "DB_PORT=3306" \
+            --set-env-vars "DB_DATABASE=${{ secrets.DB_DATABASE }}" \
+            --set-env-vars "DB_USERNAME=${{ secrets.DB_USERNAME }}" \
+            --set-env-vars "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" \
+            --command "php" \
+            --args "artisan,migrate,--force" \
+            --task-timeout 300 || true
+
+          gcloud run jobs execute ${{ needs.setup.outputs.service-name }}-migrate-${{ github.sha }} \
+            --region ${{ env.REGION }} \
+            --wait || true
+
+      - name: Output deployment URL
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ needs.setup.outputs.service-name }} \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "🚀 Deployed to: $SERVICE_URL"
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
+
+      - name: Post deployment notification
+        if: success()
+        run: |
+          echo "✅ Successfully deployed ${{ needs.setup.outputs.service-name }} to ${{ needs.setup.outputs.environment }}"
