@@ -1,6 +1,6 @@
 # Google Cloud Run Deployment Guide
 
-This guide will help you set up CI/CD deployment to Google Cloud Run with two environments: Pre-Production and Production.
+This guide will help you set up CI/CD deployment to Google Cloud Run with two environments: Staging and Production.
 
 ## Prerequisites
 
@@ -34,8 +34,8 @@ gcloud artifacts repositories create book-review \
 ### 3. Create Cloud SQL Instances
 
 ```bash
-# Pre-Production
-gcloud sql instances create book-review-preprod \
+# Staging
+gcloud sql instances create book-review-staging \
   --database-version=MYSQL_8_0 \
   --tier=db-g1-small \
   --region=us-central1
@@ -52,16 +52,16 @@ gcloud sql instances create book-review-prod \
 
 ```bash
 # For each environment
-gcloud sql databases create book_store --instance=book-review-preprod
+gcloud sql databases create book_store --instance=book-review-staging
 gcloud sql databases create book_store --instance=book-review-prod
 ```
 
 ### 5. Create Database Users
 
 ```bash
-# Pre-Production
+# Staging
 gcloud sql users create bookuser \
-  --instance=book-review-preprod \
+  --instance=book-review-staging \
   --password=SECURE_PASSWORD_HERE
 
 # Production
@@ -73,8 +73,8 @@ gcloud sql users create bookuser \
 ### 6. Create Redis (Memorystore) Instances
 
 ```bash
-# Pre-Production
-gcloud redis instances create book-review-preprod \
+# Staging
+gcloud redis instances create book-review-staging \
   --size=2 \
   --region=us-central1 \
   --tier=standard
@@ -126,12 +126,12 @@ GCP_SA_KEY=<contents of github-actions-key.json>
 
 ### 2. Environment-Specific Secrets
 
-For each environment (preprod, production), create these secrets:
+For each environment (staging, production), create these secrets:
 
-**Pre-Production Environment:**
+**Staging Environment:**
 ```
 APP_KEY=base64:GENERATED_KEY_HERE
-DB_HOST=/cloudsql/PROJECT_ID:us-central1:book-review-preprod
+DB_HOST=/cloudsql/PROJECT_ID:us-central1:book-review-staging
 DB_PORT=3306
 DB_DATABASE=book_store
 DB_USERNAME=bookuser
@@ -154,9 +154,9 @@ REDIS_HOST=REDIS_IP_ADDRESS
 
 For each environment, create these **Variables**:
 
-**Pre-Production:**
+**Staging:**
 ```
-APP_ENV=preprod
+APP_ENV=staging
 APP_DEBUG=true
 ```
 
@@ -218,7 +218,7 @@ Use the output as the `APP_KEY` secret for each environment.
 
 After setting up everything:
 
-1. Push to preprod branch
+1. Push to dev branch
 2. GitHub Actions will automatically:
    - Run tests
    - Build Docker image

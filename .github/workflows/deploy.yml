@@ -4,11 +4,11 @@ on:
   push:
     branches:
       - main
-      - preprod
+      - dev
   pull_request:
     branches:
       - main
-      - preprod
+      - dev
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -28,9 +28,9 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "environment=production" >> $GITHUB_OUTPUT
             echo "service-name=book-review-prod" >> $GITHUB_OUTPUT
-          else
-            echo "environment=preprod" >> $GITHUB_OUTPUT
-            echo "service-name=book-review-preprod" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "service-name=book-review-staging" >> $GITHUB_OUTPUT
           fi
 
   test:
@@ -66,10 +66,21 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ needs.setup.outputs.environment }}
     if: github.event_name == 'push'
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.GCP_SA_KEY }}" ]; then
+            echo "::error::GCP_SA_KEY secret is not set. Please configure it in GitHub repository settings."
+            exit 1
+          fi
+          if [ -z "${{ secrets.GCP_PROJECT_ID }}" ]; then
+            echo "::error::GCP_PROJECT_ID secret is not set. Please configure it in GitHub repository settings."
+            exit 1
+          fi
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -127,7 +138,7 @@ jobs:
           SERVICE_URL=$(gcloud run services describe ${{ needs.setup.outputs.service-name }} \
             --region ${{ env.REGION }} \
             --format 'value(status.url)')
-          
+
           gcloud run jobs create ${{ needs.setup.outputs.service-name }}-migrate-${{ github.sha }} \
             --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/book-review/${{ needs.setup.outputs.service-name }}:${{ github.sha }} \
             --region ${{ env.REGION }} \
@@ -141,7 +152,7 @@ jobs:
             --command "php" \
             --args "artisan,migrate,--force" \
             --task-timeout 300 || true
-          
+
           gcloud run jobs execute ${{ needs.setup.outputs.service-name }}-migrate-${{ github.sha }} \
             --region ${{ env.REGION }} \
             --wait || true
