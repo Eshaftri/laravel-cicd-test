@@ -11,7 +11,7 @@ on:
       - dev
 
 env:
-  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   REGION: us-central1
   GAR_LOCATION: us-central1
 
@@ -31,6 +31,9 @@ jobs:
           elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
             echo "environment=staging" >> $GITHUB_OUTPUT
             echo "service-name=book-review-staging" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Unsupported branch: ${{ github.ref }}"
+            exit 1
           fi
 
   test:
@@ -42,7 +45,7 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: "8.2"
           extensions: mbstring, xml, bcmath, pdo_mysql
           coverage: none
 
@@ -71,14 +74,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate required secrets
+      # ✅ FIXED VALIDATION (NO more "too many arguments")
+      - name: Validate required config
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
         run: |
-          if [ -z "${{ secrets.GCP_SA_KEY }}" ]; then
+          if [[ -z "$GCP_SA_KEY" ]]; then
             echo "::error::GCP_SA_KEY secret is not set. Please configure it in GitHub repository settings."
             exit 1
           fi
-          if [ -z "${{ secrets.GCP_PROJECT_ID }}" ]; then
-            echo "::error::GCP_PROJECT_ID secret is not set. Please configure it in GitHub repository settings."
+
+          if [[ -z "$PROJECT_ID" ]]; then
+            echo "::error::GCP_PROJECT_ID variable is not set. Please configure it in GitHub repository settings."
             exit 1
           fi
 
@@ -92,7 +100,7 @@ jobs:
 
       - name: Configure Docker for Artifact Registry
         run: |
-          gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev
+          gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
 
       - name: Build Docker image
         run: |
@@ -114,7 +122,7 @@ jobs:
             --platform managed \
             --region ${{ env.REGION }} \
             --allow-unauthenticated \
-            --set-env-vars "APP_ENV=${{ vars.APP_ENV }}" \
+            --set-env-vars "APP_ENV=${{ needs.setup.outputs.environment }}" \
             --set-env-vars "APP_DEBUG=${{ vars.APP_DEBUG }}" \
             --set-env-vars "APP_KEY=${{ secrets.APP_KEY }}" \
             --set-env-vars "DB_CONNECTION=mysql" \
@@ -131,41 +139,4 @@ jobs:
             --memory 512Mi \
             --cpu 1 \
             --timeout 300 \
-            --concurrency 80
-
-      - name: Run database migrations
-        run: |
-          SERVICE_URL=$(gcloud run services describe ${{ needs.setup.outputs.service-name }} \
-            --region ${{ env.REGION }} \
-            --format 'value(status.url)')
-
-          gcloud run jobs create ${{ needs.setup.outputs.service-name }}-migrate-${{ github.sha }} \
-            --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/book-review/${{ needs.setup.outputs.service-name }}:${{ github.sha }} \
-            --region ${{ env.REGION }} \
-            --set-env-vars "APP_KEY=${{ secrets.APP_KEY }}" \
-            --set-env-vars "DB_CONNECTION=mysql" \
-            --set-env-vars "DB_HOST=${{ secrets.DB_HOST }}" \
-            --set-env-vars "DB_PORT=${{ secrets.DB_PORT }}" \
-            --set-env-vars "DB_DATABASE=${{ secrets.DB_DATABASE }}" \
-            --set-env-vars "DB_USERNAME=${{ secrets.DB_USERNAME }}" \
-            --set-env-vars "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" \
-            --command "php" \
-            --args "artisan,migrate,--force" \
-            --task-timeout 300 || true
-
-          gcloud run jobs execute ${{ needs.setup.outputs.service-name }}-migrate-${{ github.sha }} \
-            --region ${{ env.REGION }} \
-            --wait || true
-
-      - name: Output deployment URL
-        run: |
-          SERVICE_URL=$(gcloud run services describe ${{ needs.setup.outputs.service-name }} \
-            --region ${{ env.REGION }} \
-            --format 'value(status.url)')
-          echo "🚀 Deployed to: $SERVICE_URL"
-          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
-
-      - name: Post deployment notification
-        if: success()
-        run: |
-          echo "✅ Successfully deployed ${{ needs.setup.outputs.service-name }} to ${{ needs.setup.outputs.environment }}"
+            --co
